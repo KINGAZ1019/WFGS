@@ -66,6 +66,7 @@ class ModelParams(ParamGroup):
 
         current_time = datetime.now().strftime("%m%d%Y%H%M%S")
 
+        # 此处修改数据集
         self.input_data_folder = os.path.join(base_dir, "data")
 
         self.dataset = "rfid"
@@ -74,6 +75,7 @@ class ModelParams(ParamGroup):
 
         self.llffhold = 8
         self.llffhold_flag = False
+        # self.llffhold_flag = True
         self.ratio_train = 0.1
 
         self.sh_degree = 3

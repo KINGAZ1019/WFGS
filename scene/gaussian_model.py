@@ -11,7 +11,7 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation, \
     inverse_sigmoid, get_expon_lr_func, build_rotation
 from utils.system_utils import mkdir_p
 
-from .pos_encoder import Update_SH_Coeffs
+from .pos_encoder import WideFreqNetwork, Embedder
 
 from utils.train_utils import initialize_weights
 from utils.sh_utils import RGB2SH
@@ -81,6 +81,42 @@ class GaussianModel:
                 + (self.hidden_dim_2 * self.output_dim) + self.output_dim
 
         self.num_channels = 2
+
+        self.tx_encoder = Embedder(
+            input_dims=3,
+            include_input=True,
+            max_freq_log2=args.max_freq_log2,
+            num_freqs=args.num_freqs,
+            log_sampling=True,
+            periodic_fns=[torch.sin, torch.cos]
+        )
+
+        self.pts_encoder = Embedder(
+            input_dims=3,
+            include_input=True,
+            max_freq_log2=args.max_freq_log2,
+            num_freqs=args.num_freqs,
+            log_sampling=True,
+            periodic_fns=[torch.sin, torch.cos]
+        )
+
+        self.freq_encoder = Embedder(
+            input_dims=1,
+            include_input=True,
+            max_freq_log2=args.max_freq_log2,
+            num_freqs=args.num_freqs,
+            log_sampling=True,
+            periodic_fns=[torch.sin, torch.cos]
+        )
+
+        self.freq_modulator = WideFreqNetwork(
+            input_dim_pos=self.tx_encoder.out_dim,
+            input_dim_pts=self.pts_encoder.out_dim,
+            input_dim_freq=self.freq_encoder.out_dim,
+            hidden_dim=256,
+            D=8,
+            skips=[4]
+        ).to(self.data_device)
 
     @property
     def get_xyz(self):
@@ -261,6 +297,7 @@ class GaussianModel:
             {'params': [self._attenuation],   'lr': training_args.opacity_lr,                               "name": "attenuation"},
             {'params': [self._scaling],       'lr': training_args.scaling_lr,                               "name": "scaling"},
             {'params': [self._rotation],      'lr': training_args.rotation_lr,                              "name": "rotation"},
+            {'params': self.freq_modulator.parameters(),    'lr':training_args.feature_lr,                  "name": "freq_net"},
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -339,6 +376,8 @@ class GaussianModel:
         optimizable_tensors = {}
 
         for group in self.optimizer.param_groups:
+            if group["name"] == "freq_net":
+                continue
 
             if group["name"] == name:
 
@@ -362,7 +401,8 @@ class GaussianModel:
         optimizable_tensors = {}
 
         for group in self.optimizer.param_groups:
-
+            if group["name"] == "freq_net":
+                continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
 
             if stored_state is not None:
@@ -407,6 +447,9 @@ class GaussianModel:
         optimizable_tensors = {}
 
         for group in self.optimizer.param_groups:
+
+            if group["name"] not in tensors_dict:
+                continue
 
             assert len(group["params"]) == 1
 

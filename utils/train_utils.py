@@ -7,11 +7,11 @@ import uuid
 import random
 
 from .data_painter import paint_spectrum
-from .loss_utils import psnr
+from .loss_utils import psnr, ssim
 import torch.nn as nn
 
-import lpips
-loss_lpips_t = lpips.LPIPS(net='alex')
+# import lpips
+# loss_lpips_t = lpips.LPIPS(net='alex')
 
 
 try:
@@ -57,6 +57,8 @@ def training_report(tb_writer,
 
                 l1_test = 0.0
                 psnr_test = 0.0
+                ssim_test = 0.0
+
                 for idx, viewpoint in enumerate(config['spectrums']):
                                         
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, \
@@ -82,6 +84,7 @@ def training_report(tb_writer,
                     
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
+                    ssim_test += ssim(image, gt_image).mean().double()
 
                     filename = os.path.join(image_path, f"ite_{iteration:06d}_{config['name']}_{idx:06d}.png")
                     paint_spectrum(gt_image.cpu().squeeze().numpy(), 
@@ -90,13 +93,14 @@ def training_report(tb_writer,
 
                 l1_test /= len(config['spectrums'])
                 psnr_test /= len(config['spectrums'])
+                ssim_test /= len(config['spectrums'])
 
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} SSIM {}".format(iteration, config['name'], l1_test, psnr_test, ssim_test))
                 
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
-
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - ssim', ssim_test, iteration)
 
         if tb_writer:
 

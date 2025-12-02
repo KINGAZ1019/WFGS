@@ -3,6 +3,8 @@ import torch
 from random import randint
 import sys
 import uuid
+
+from sympy import false
 from tqdm import tqdm
 from argparse import ArgumentParser
 import re
@@ -47,7 +49,7 @@ def testing(model_para_args,
     scene = Scene(model_para_args, gaussians, load_iteration=extracted_number, shuffle=True)
 
     if checkpointpath_inference:
-        (model_params, first_iter) = torch.load(checkpointpath_inference)
+        (model_params, first_iter) = torch.load(checkpointpath_inference, weights_only=False)
         gaussians.restore(model_params, optimization_para_args)
 
 
@@ -57,6 +59,12 @@ def testing(model_para_args,
     bg = torch.rand((3), device="cuda") if optimization_para_args.random_background else background
     
     viewpoint_stack = scene.getTestSpectrums().copy()
+
+    psnr_list = []
+    ssim_list = []
+    name_list = []
+
+    output_dir = os.path.dirname(checkpointpath_inference)
     for step_idx, viewpoint_cam in enumerate(viewpoint_stack):
 
         print(f"{step_idx + 1} / {len(viewpoint_stack)}")
@@ -69,9 +77,34 @@ def testing(model_para_args,
         spectrum = spectrum.detach().cpu().numpy()
 
         psnr_value = skimage.metrics.peak_signal_noise_ratio(spectrum, gt_spectrum, data_range=1)
+        ssim_value = skimage.metrics.structural_similarity(spectrum, gt_spectrum, data_range=1)
 
-        print(f"PSNR: {psnr_value:.4f}")
+        print(f"PSNR: {psnr_value:.4f}, SSIM: {ssim_value:.4f}")
+        psnr_list.append(psnr_value)
+        ssim_list.append(ssim_value)
+        name_list.append(viewpoint_cam.spectrum_name)
 
+    avg_psnr = np.mean(psnr_list)
+    avg_ssim = np.mean(ssim_list)
+    print(f"\n[FINAL RESULT] Average PSNR: {avg_psnr:.4f} | Average SSIM: {avg_ssim:.4f}")
+
+        # 创建txt文件并保存值
+    txt_path = os.path.join(output_dir, f"evaluation_iter{extracted_number}.txt")
+    with open(txt_path, "w") as f:
+        f.write(f"Evaluation Report - Iteration {extracted_number}\n")
+        f.write(f"Checkpoint: {checkpointpath_inference}\n")
+        f.write(f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("=" * 60 + "\n")
+        f.write(f"{'View Name':<20} | {'PSNR':<15} | {'SSIM':<15}\n")
+        f.write("-" * 60 + "\n")
+
+        for n, p, s in zip(name_list, psnr_list, ssim_list):
+            f.write(f"{n:<20} | {p:<15.4f} | {s:<15.4f}\n")
+
+        f.write("-" * 60 + "\n")
+        f.write(f"{'AVERAGE':<20} | {avg_psnr:<15.4f} | {avg_ssim:<15.4f}\n")
+        f.write("=" * 60 + "\n")
+    print(f"Detailed report (txt) saved to: {txt_path}")
 
 def main_inference():
 
@@ -97,8 +130,8 @@ def main_inference():
 
     default_iter_inference = args.iterations
 
-    # exp_name = args.exp_name
-    exp_name = "gsrf_05212025181542"
+    exp_name = args.exp_name
+    # exp_name = "gsrf_05212025181542"
 
     dataset_name = args.dataset
 

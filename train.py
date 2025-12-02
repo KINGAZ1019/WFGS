@@ -255,7 +255,7 @@ if __name__ == '__main__':
     os.makedirs(model_path_dir, exist_ok=True)
     args.model_path = model_path_dir
 
-    os.makedirs(os.path.join(model_path_dir, "plot_xyz"), exist_ok=True)
+    # os.makedirs(os.path.join(model_path_dir, "plot_xyz"), exist_ok=True)
 
     # make sure to save the final point cloud data
     args.save_iterations.append(default_iter)

@@ -36,7 +36,7 @@ class SpectrumInfo(NamedTuple):
     spectrum_name: str    # A string representing the name of the image.
     width: int     
     height: int
-
+    freq: float
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -87,6 +87,19 @@ def readSpectrumImage(data_dir_path):
     gateway_pos_path = os.path.join(data_dir_path, 'gateway_info.yml')
     spectrum_dir     = os.path.join(data_dir_path, 'spectrum')
     spt_names = sorted([f for f in os.listdir(spectrum_dir) if f.endswith('.png')])
+    # 读取频率信息
+    freq_path = os.path.join(data_dir_path, 'freq.txt')
+    try:
+        freq = np.loadtxt(freq_path)
+        MAX_FREQ = 94.0
+        # normalization
+        freq_norm = freq / MAX_FREQ
+        print(f"Loaded frequencies from {freq_path}. Range: {freq.min()} - {freq.max()} GHz")
+
+    except Exception as e:
+        print(f"ERROR: Failed to load or process '{freq_path}'.", file=sys.stderr)
+        print(f"Details: {e}", file=sys.stderr)
+        sys.exit(1)  # 退出程序
 
     with open(gateway_pos_path) as f_loader:
         gateway_info = yaml.safe_load(f_loader)
@@ -121,6 +134,7 @@ def readSpectrumImage(data_dir_path):
         resized_image = torch.from_numpy(np.array(image)).float()   # torch.Size([90, 360])
 
         # resized_image = resized_image.unsqueeze(dim=-1).permute(2, 0, 1).repeat(3, 1, 1)
+        freq = float(freq_norm[image_idx % len(freq_norm)])
 
         spec_info = SpectrumInfo(R=rotation_matrix, 
                                 #  T_rx=tvec_tx,
@@ -131,7 +145,8 @@ def readSpectrumImage(data_dir_path):
                                  spectrum_path=image_path, 
                                  spectrum_name=image_name_t,
                                  height=height,
-                                 width=width)
+                                 width=width,
+                                 freq = freq)
         
         data_infos.append(spec_info)
 
@@ -258,11 +273,14 @@ def readRFSceneInfo(args_model):
     nerf_normalization = getNorm_3d(spectrums_infos, camera_scale)
 
     ply_path = os.path.join(path, "points3D.ply")
-    if ((not os.path.exists(ply_path)) or (args_model.gene_init_point)):
+    if (not os.path.exists(ply_path)) or (args_model.gene_init_point):
 
         receiver_pos = spectrums_infos[0].T_rx.numpy()
 
-        cube_size = round((3.00e8 / 902.0e6) * voxel_size_scale, 2)
+        avg_freq_ghz = np.mean([s.freq for s in spectrums_infos])
+        avg_freq = avg_freq_ghz * 1e9
+
+        cube_size = round((3.00e8 / avg_freq) * voxel_size_scale, 2)
 
         num_pos = init_ply_v2(ply_path, receiver_pos, nerf_normalization["extent"], cube_size)
 
@@ -288,14 +306,18 @@ def fetch_init_ply(path):
     plydata = PlyData.read(path)
 
     vertices = plydata['vertex']
-
+    # np.vstack 将 x, y, z 三个 (N,) 的数组垂直堆叠成 (3, N)
+    # .T 转置操作将其变为 (N, 3)，符合 PyTorch 的标准输入格式
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
 
+    # 在该项目中是全零填充的占位数据，仅为了符合 PLY 文件格式标准，不参与核心的射频场训练或渲染计算
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
-
+    # 不需要点云中的颜色信息
     return BasicPointCloud(points=positions, attris=None, normals=normals)
 
-
+# 这一部分点云的生成需要更改（下列两个函数）
+# 根据物理计算（波长和场景大小）生成了一个规则的网格点云来初始化场景
+# 这是一个“体素化空间采样”的过程
 def init_ply_v2(ply_path, receiver_pos, camera_extent, cube_size):
 
     dtype = [('x', 'f4'),  ('y', 'f4'),  ('z', 'f4'),
@@ -343,6 +365,7 @@ def generate_cube_coordinates(receiver_pos, camera_extent, cube_size):
 
     # Create a grid of points
     x_grid, y_grid, z_grid = np.meshgrid(x_coords, y_coords, z_coords, indexing='ij')
+    # [N, 3]
     cube_points = np.vstack([x_grid.ravel(), y_grid.ravel(), z_grid.ravel()]).T
 
     return cube_points

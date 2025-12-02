@@ -147,6 +147,25 @@ def render(viewpoint,
     shs_coeffs  = pc.get_features
     attenuation = pc.get_attenuation
 
+    try:
+        freq_ghz = viewpoint.freq
+    except AttributeError:
+        freq_ghz = 0.902 # Default
+
+    freq = torch.tensor([[freq_ghz]], device=means_3d.device, dtype=torch.float32)
+    tx_pos_net = viewpoint.T_rx.unsqueeze(0)  # [1, 3]
+
+    tx_encoder = pc.tx_encoder(tx_pos_net)          # [1, D_pos]
+    pts_encoder = pc.pts_encoder(means_3d)     # [N, D_pts]
+    freq_encoder = pc.freq_encoder(freq)     # [1, D_freq]
+
+    s_a, s_p_complex, att_a, att_p_complex = pc.freq_modulator(tx_encoder, pts_encoder, freq_encoder)
+
+    shs_coeffs_mod = shs_coeffs.clone()
+    shs_coeffs_mod[:, 0, :] = shs_coeffs[:, 0, :] * s_a
+
+    attenuation_mod = attenuation * att_a
+
     cov3d_precomp, actual_cov3d = pc.get_covariance(scaling_modifier)
 
     # not unsed in CUDA code
@@ -168,10 +187,10 @@ def render(viewpoint,
     r_d_w_fine_rotation = rotation_rx @ r_d_fine_ori
 
     r_d_fine_t = r_d_fine_ori + tvec_rx[:, None]
-
+    # 交换维度 [3,N]-->[N,3]
     r_d_w_fine = r_d_fine_t.permute(1, 0)
 
-    shs_view = shs_coeffs.transpose(1, 2).view(-1, pc.num_channels, (pc.max_sh_degree + 1) ** 2)
+    shs_view = shs_coeffs_mod.transpose(1, 2).contiguous().view(-1, pc.num_channels, (pc.max_sh_degree + 1) ** 2)
 
     dir_pp = (means_3d - tvec_rx.repeat(means_3d.shape[0], 1))         
     dir_pp_normalized = dir_pp / dir_pp.norm(dim=1, keepdim=True)
@@ -210,7 +229,7 @@ def render(viewpoint,
     rendered_image_complex = rasterizer(means_3d=means_3d,                
                                 cov3d_precomp=cov3d_precomp, 
                                 signal_precomp=stacked_signal,
-                                attenuation=attenuation,
+                                attenuation=attenuation_mod,
                                 )
 
 
